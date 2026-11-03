@@ -22,7 +22,7 @@ EduPilot answers questions for three Indiana University courses: Applied Machine
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
 - [Tests and CI](#tests-and-ci)
-- [Authors](#authors)
+- [Author](#author)
 
 ---
 
@@ -311,11 +311,10 @@ uv run edupilot-evaluate           # the 50-case evaluation suite, against live 
 
 GitHub Actions runs the Python tests, the frontend's lint, typecheck, tests and build, and builds the Docker image with and without local models, smoke-testing each. On `main`, the deploy workflow publishes the image and rolls it out to Fly.io when a `FLY_API_TOKEN` secret is set.
 
-## Authors
+## Author
 
-| Name | Email | Contributions |
-|---|---|---|
-| **Akshar Patel** | akspate@iu.edu | System architecture, hybrid retrieval pipeline (Pinecone + BM25 + RRF), query router with keyword fallback, query splitter, SQLite database layer, FastAPI async backend, confidence-thresholded reranker, evaluation suite construction, report writing; the 2026 rebuild described above |
-| **Khushi Shah** | khusshah@iu.edu | Domain agent prompt engineering, cross-domain synthesizer, two-pass verifier with targeted revision, Self Study module, Streamlit debug UI, all seven prompt templates, evaluation framework (10 queries, 8 metrics, three categories), 3-model comparison analysis, primary report writing |
+**Akshar Patel** · akspate@iu.edu
+
+Designed and built by Akshar Patel: the agent graph, retrieval and grounding, the web app, the Postgres and Redis infrastructure, load testing and CI.
 
 Indiana University Bloomington · Luddy School of Informatics, Computing, and Engineering

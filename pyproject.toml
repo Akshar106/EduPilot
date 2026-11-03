@@ -11,7 +11,6 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Akshar Patel" },
-    { name = "Khushi Shah" },
 ]
 keywords = ["rag", "llm", "education", "multi-agent", "retrieval"]
 classifiers = [
