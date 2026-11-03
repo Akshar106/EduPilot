@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { percent } from "@/lib/format";
-import type { Diagnostics } from "@/lib/types";
+import type { Diagnostics, VerifierScores } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function Row({ title, children }: { title: string; children: React.ReactNode }) {
@@ -15,6 +15,20 @@ function Row({ title, children }: { title: string; children: React.ReactNode }) 
       <div className="text-xs leading-relaxed">{children}</div>
     </div>
   );
+}
+
+/**
+ * The scores an audit measured. The claim check scores grounding only, so
+ * quality and coverage are left out rather than shown as 0%.
+ */
+function verificationSummary(v: VerifierScores): string {
+  const scores = [
+    v.quality_score != null && `Quality ${percent(v.quality_score)}`,
+    v.coverage_score != null && `Coverage ${percent(v.coverage_score)}`,
+    v.grounding_score != null && `Grounding ${percent(v.grounding_score)}`,
+  ].filter(Boolean);
+  const by = v.auditor === "claim check" ? "Claim check" : "Model verifier";
+  return [by, ...scores].join(" · ");
 }
 
 /** What the pipeline did for one answer: routing, retrieval, verification, cost. */
@@ -62,8 +76,7 @@ export function DebugPanel({ debug }: { debug: Diagnostics }) {
   if (verifier && !verifier.skipped) {
     rows.push(
       <Row key="verify" title="Verification">
-        Quality {percent(verifier.quality_score)} · Coverage {percent(verifier.coverage_score)} · Grounding{" "}
-        {percent(verifier.grounding_score)}
+        {verificationSummary(verifier)}
         {audits.length > 1 && (
           <div className="text-muted-foreground">
             Revised: grounding {audits.map((a) => percent(a.grounding_score)).join(" → ")}

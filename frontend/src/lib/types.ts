@@ -79,6 +79,8 @@ export interface Diagnostics {
 
 export interface VerifierScores {
   skipped?: boolean;
+  /** "claim check" when the local check audited the answer instead of the model verifier. */
+  auditor?: string;
   grounding_score?: number | null;
   coverage_score?: number | null;
   quality_score?: number | null;
