@@ -1,0 +1,17 @@
+# Scrapes every API replica and the worker (docker-compose.yml, profile
+# "metrics"). DNS discovery returns each replica's address, so scaling the api
+# service needs no change here.
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: edupilot-api
+    dns_sd_configs:
+      - names: ["api"]
+        type: A
+        port: 8000
+  - job_name: edupilot-worker
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9100

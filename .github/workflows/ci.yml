@@ -1,0 +1,189 @@
+name: CI
+
+# Every push and pull request. This is the gate that must stay green; the
+# release workflow only runs after it passes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an in-flight run on the same ref.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the Dockerfile base image, so CI exercises the interpreter
+  # production actually runs rather than whatever is newest.
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    name: lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The suite runs against real Postgres with pgvector. conftest creates a
+    # fresh database on this server for the run and drops it afterwards.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      # For the shared rate limit and turn limit tests.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install
+        # --locked fails if uv.lock is out of date with pyproject.toml, so a
+        # dependency change cannot land without its lockfile. No extras: the
+        # suite never loads torch or a model, which keeps this job fast.
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run --locked ruff check src tests loadtest
+
+      - name: Test
+        # No secrets: conftest pins EDUPILOT_DATA_DIR at a temp directory and
+        # DATABASE_URL at a throwaway database, and nothing in the suite calls
+        # a provider. If a test ever needs a key, that test is reaching the
+        # network and should be rewritten.
+        env:
+          EDUPILOT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          EDUPILOT_TEST_REDIS_URL: redis://localhost:6379/0
+        run: uv run --locked pytest -q
+
+      - name: Verify the package installs clean and imports cheaply
+        run: |
+          uv run --locked python -c "
+          import sys, edupilot
+          heavy = [m for m in ('torch', 'sentence_transformers', 'pinecone') if m in sys.modules]
+          assert not heavy, f'importing edupilot eagerly loaded {heavy}'
+          print('edupilot', edupilot.__version__)
+          "
+
+  frontend:
+    name: frontend lint, typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Static export
+        run: npx next build
+
+  docker:
+    name: build image (local models ${{ matrix.local_models }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only after the suite is green — a broken build is not worth 20 minutes
+    # of model downloads to discover.
+    needs: [test, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both images the Dockerfile can produce: in-process models (what is
+        # deployed today) and hosted Pinecone Inference models (no torch).
+        local_models: ["true", "false"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: edupilot:ci
+          build-args: LOCAL_MODELS=${{ matrix.local_models }}
+          # Layer cache in GitHub Actions cache, one scope per variant. The
+          # model-bake layer is ~1.2 GB and changes only when the model ids do,
+          # so subsequent runs skip it.
+          cache-from: type=gha,scope=local-models-${{ matrix.local_models }}
+          cache-to: type=gha,mode=max,scope=local-models-${{ matrix.local_models }}
+
+      - name: Smoke test the image
+        # Proves the container actually serves, not merely that it builds.
+        # No API keys and no index, so health reports degraded — that is
+        # expected and fine; what matters is that it boots, migrates the
+        # database and answers on the HTTP port.
+        run: |
+          docker network create edupilot-ci
+          docker run -d --name edupilot-ci-db --network edupilot-ci \
+            -e POSTGRES_USER=edupilot -e POSTGRES_PASSWORD=edupilot -e POSTGRES_DB=edupilot \
+            pgvector/pgvector:pg17
+          until docker exec edupilot-ci-db pg_isready -U edupilot -d edupilot >/dev/null 2>&1; do
+            sleep 1
+          done
+
+          docker run -d --name edupilot-ci --network edupilot-ci -p 7860:7860 \
+            -e DATABASE_URL=postgresql://edupilot:edupilot@edupilot-ci-db:5432/edupilot \
+            -e JWT_SECRET_KEY=ci-only-not-a-real-secret-0123456789abcdef \
+            edupilot:ci
+
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7860/api/health >/dev/null 2>&1; then
+              echo "container is serving"
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "::error::container never became healthy"
+              docker logs edupilot-ci
+              exit 1
+            fi
+            sleep 5
+          done
+
+          echo "--- migrations and startup ---"
+          docker logs edupilot-ci 2>&1 | grep -E "migrated|startup|open mode" || true
+
+          echo "--- the frontend is served ---"
+          curl -fsS -o /tmp/index.html -w "  GET / -> %{http_code}\n" http://127.0.0.1:7860/
+          curl -fsS -o /dev/null -w "  GET /study/ -> %{http_code}\n" http://127.0.0.1:7860/study/
+          asset=$(grep -o '/_next/static/[^"]*\.js' /tmp/index.html | head -1)
+          test -n "$asset" || { echo "::error::no bundle referenced from /"; exit 1; }
+          curl -fsS -o /dev/null -w "  GET $asset -> %{http_code}\n" "http://127.0.0.1:7860$asset"
+
+          docker rm -f edupilot-ci edupilot-ci-db

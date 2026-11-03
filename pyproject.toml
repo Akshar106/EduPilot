@@ -1,0 +1,171 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edupilot"
+version = "2.0.0"
+description = "A multi-agent, source-grounded educational AI system for adaptive and cross-domain learning"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Akshar Patel" },
+    { name = "Khushi Shah" },
+]
+keywords = ["rag", "llm", "education", "multi-agent", "retrieval"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Education",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # ── Core API + server ────────────────────────────────────────────────────
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.7.0",
+    # ── Agent orchestration ──────────────────────────────────────────────────
+    # LangGraph runs the agent graph; the Postgres saver persists each
+    # conversation's working memory between turns, and the Postgres store
+    # holds student profiles.
+    "langgraph>=1.0.0",
+    "langgraph-checkpoint-postgres>=3.0.0",
+    "langchain-core>=1.0.0",
+    # ── LLM providers (LangChain chat models over the Groq / Gemini SDKs) ────
+    "langchain-groq>=1.0.0",
+    "langchain-google-genai>=3.0.0",
+    # ── Environment ──────────────────────────────────────────────────────────
+    "python-dotenv>=1.0.0",
+    # ── Database: Postgres for app tables, vectors, checkpoints and caches ──
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "psycopg[binary,pool]>=3.2.0",
+    "pgvector>=0.4.0",
+    # ── Shared state across API processes: rate limits, the turn limiter ─────
+    "redis>=5.2.0",
+    # ── Metrics ──────────────────────────────────────────────────────────────
+    "prometheus-client>=0.21.0",
+    # ── Hosted models and the optional Pinecone vector backend ───────────────
+    "pinecone>=6.0.0",
+    # ── Tracing + evaluation ─────────────────────────────────────────────────
+    "langsmith>=0.4.0",
+    # ── Token counting for the chunker (Rust tokenizer only, no torch) ───────
+    "tokenizers>=0.20.0",
+    # ── Document extraction ──────────────────────────────────────────────────
+    "PyMuPDF>=1.24.0",
+    "pdfplumber>=0.11.0",
+    "python-docx>=1.1.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+    # ── Security ─────────────────────────────────────────────────────────────
+    "PyJWT>=2.8.0",
+    "bcrypt>=4.1.0",
+    # ── Scientific computing ─────────────────────────────────────────────────
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+# Local embedding and reranking models (BAAI/bge-*) run in-process. They pull in
+# PyTorch and ~1.2 GB of weights, so they are opt-in: hosted Pinecone Inference
+# models need neither. Required while EMBEDDING_MODEL / RERANKER_MODEL name a
+# local model, which is the default.
+local-models = [
+    "sentence-transformers>=3.0.0",
+    "transformers>=4.40.0",
+    # Listed directly so [tool.uv.sources] can pin it to the CPU index; uv
+    # applies sources to direct dependencies only.
+    "torch>=2.2.0",
+]
+# Layout-model PDF parsing for `edupilot-reindex --parser docling`. Also pulls in
+# PyTorch, and runs at roughly a second per page on CPU, so it is meant for
+# offline re-indexing rather than the web image.
+docling = [
+    "docling>=2.50.0",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",       # FastAPI TestClient transport
+    "testcontainers>=4.15.0",  # throwaway Postgres for the test run
+    "ruff>=0.5.0",
+]
+# Load tests: `uv run --group load locust -f loadtest/locustfile.py`. Kept out
+# of dev because Locust pulls in gevent, which the test suite does not need.
+load = [
+    "locust>=2.32.0",
+]
+
+[project.scripts]
+edupilot-reindex = "edupilot.cli.reindex:main"
+edupilot-evaluate = "edupilot.cli.evaluate:main"
+edupilot-db = "edupilot.cli.database:main"
+edupilot-worker = "edupilot.cli.worker:main"
+
+[project.urls]
+Repository = "https://github.com/Akshar106/EduPilot-A-Multi-Agent-Source-Grounded-Educational-AI-System-for-Adaptive-and-Cross-Domain-Learning"
+
+# ---------------------------------------------------------------------------
+# Packaging — src layout
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The built frontend (frontend/ -> web/static) ships inside the package so
+# STATIC_DIR resolves whether the app is run from a checkout or a wheel.
+edupilot = ["web/static/**/*", "db/migrations/script.py.mako"]
+
+# ---------------------------------------------------------------------------
+# uv
+# ---------------------------------------------------------------------------
+# CPU-only torch (and torchvision, which Docling uses) on Linux. The default index resolves the CUDA build: several GB
+# of libraries a CPU host (CI runners, the Docker image) cannot use. macOS
+# wheels on PyPI are already CPU/MPS builds.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",  # long lines are handled by the formatter, not enforced
+    "B008",  # FastAPI's Depends()/File() defaults are the documented idiom
+    # zip(strict=) changes behaviour: today a length mismatch truncates, with
+    # strict=True it raises mid-request. Worth revisiting deliberately, per
+    # call site, rather than as a blanket sweep.
+    "B905",
+    # `class Role(str, Enum)` is intentional and documented in security/auth.py.
+    # str() already yields the value, so StrEnum would be a pure rename inside
+    # the auth and error-envelope types for no behavioural gain.
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["edupilot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"

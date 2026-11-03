@@ -1,0 +1,49 @@
+# Keep the build context small and free of anything that must not ship.
+#
+# data/ is the big one: the course corpus is copyrighted lecture material,
+# and self_study_files/ holds students' private uploads. The container gets
+# its state from Postgres (DATABASE_URL) and a mounted volume instead.
+
+# ── Secrets and runtime data ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ── Local environments and caches ────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Repo metadata not needed at runtime ──────────────────────────────────────
+.git/
+.github/
+.gitignore
+.claude/
+docs/
+tests/
+*.md
+!README.md
+
+# ── Editors and OS ───────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+
+# ── Frontend build inputs and outputs ────────────────────────────────────────
+# The image builds the frontend itself in a Node stage; a local build or
+# node_modules must not leak into the context.
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+src/edupilot/web/static/
